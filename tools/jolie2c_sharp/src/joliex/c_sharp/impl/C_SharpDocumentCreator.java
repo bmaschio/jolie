@@ -1,0 +1,956 @@
+/**
+ * *************************************************************************
+ * Copyright (C) 2011 by Balint Maschio <bmaschio@italianasoftware.com> * * This
+ * program is free software; you can redistribute it and/or modify * it under
+ * the terms of the GNU Library General Public License as * published by the
+ * Free Software Foundation; either version 2 of the * License, or (at your
+ * option) any later version. * * This program is distributed in the hope that
+ * it will be useful, * but WITHOUT ANY WARRANTY; without even the implied
+ * warranty of * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the *
+ * GNU General Public License for more details. * * You should have received a
+ * copy of the GNU Library General Public * License along with this program; if
+ * not, write to the * Free Software Foundation, Inc., * 59 Temple Place - Suite
+ * 330, Boston, MA 02111-1307, USA. * * For details about the authors of this
+ * software, see the AUTHORS file. *
+ * *************************************************************************
+ */
+package joliex.c_sharp.impl;
+
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.Writer;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.Vector;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import jolie.lang.NativeType;
+import jolie.lang.parse.ast.InputPortInfo;
+import jolie.lang.parse.ast.InterfaceDefinition;
+import jolie.lang.parse.ast.OneWayOperationDeclaration;
+import jolie.lang.parse.ast.OperationDeclaration;
+import jolie.lang.parse.ast.OutputPortInfo;
+import jolie.lang.parse.ast.RequestResponseOperationDeclaration;
+import jolie.lang.parse.ast.types.TypeDefinition;
+import jolie.lang.parse.ast.types.TypeDefinitionLink;
+import jolie.lang.parse.ast.types.TypeInlineDefinition;
+import jolie.lang.parse.util.ProgramInspector;
+import joliex.c_sharp.support.GeneralDocumentCreator;
+import joliex.c_sharp.support.GeneralProgramVisitor;
+import joliex.c_sharp.support.treeOLObject;
+import jolie.runtime.Value;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+
+/**
+ *
+ * @author balint maschio & michele morgagni
+ */
+public class C_SharpDocumentCreator {
+
+    private Vector<TypeDefinition> subclass;
+    private boolean subtypePresent = false;
+    private String namespace;
+    private String targetPort;
+    private LinkedHashMap<String, TypeDefinition> typeMap;
+    private LinkedHashMap<String, TypeDefinition> subTypeMap;
+    ProgramInspector inspector;
+    private static HashMap<NativeType, String> cSharpNativeEquivalent = new HashMap<NativeType, String>();
+    private static HashMap<NativeType, String> cSharpNativeMethod = new HashMap<NativeType, String>();
+    private String directoryPath;
+    private boolean addSource;
+
+    public C_SharpDocumentCreator(ProgramInspector inspector, String namespace, String targetPort, boolean addSource) {
+
+	this.inspector = inspector;
+	this.namespace = namespace;
+	this.targetPort = targetPort;
+	this.addSource = addSource;
+
+	cSharpNativeEquivalent.put(NativeType.INT, "Integer");
+	cSharpNativeEquivalent.put(NativeType.BOOL, "Boolean");
+	cSharpNativeEquivalent.put(NativeType.DOUBLE, "Double");
+	cSharpNativeEquivalent.put(NativeType.LONG, "Long");
+	cSharpNativeEquivalent.put(NativeType.STRING, "String");
+	cSharpNativeEquivalent.put(NativeType.ANY, "Object");
+	cSharpNativeEquivalent.put(NativeType.RAW, "ByteArray");
+
+	cSharpNativeMethod.put(NativeType.INT, "intValue()");
+	cSharpNativeMethod.put(NativeType.BOOL, "boolValue()");
+	cSharpNativeMethod.put(NativeType.DOUBLE, "doubleValue()");
+	cSharpNativeMethod.put(NativeType.LONG, "longValue()");
+	cSharpNativeMethod.put(NativeType.STRING, "strValue()");
+	cSharpNativeMethod.put(NativeType.RAW, "byteArrayValue()");
+    }
+
+    private void createPackageDirectory() {
+	String[] directoriesComponents = namespace.split("\\.");
+	File f = new File(".");
+
+	try {
+	    directoryPath = f.getCanonicalPath() + "\\c_sharp";
+	    for (int counterDirectories = 0; counterDirectories < directoriesComponents.length; counterDirectories++) {
+		directoryPath += "\\" + directoriesComponents[counterDirectories];
+	    }
+	    f = new File(directoryPath);
+	    f.mkdirs();
+	} catch (IOException ex) {
+	    Logger.getLogger(C_SharpDocumentCreator.class.getName()).log(Level.SEVERE, null, ex);
+	}
+    }
+
+    public void ConvertDocument() {
+
+	typeMap = new LinkedHashMap<String, TypeDefinition>();
+	subTypeMap = new LinkedHashMap<String, TypeDefinition>();
+	subclass = new Vector<TypeDefinition>();
+	int counterSubClass;
+	TypeDefinition[] support = inspector.getTypes();
+	InputPortInfo[] inputPorts = inspector.getInputPorts();
+	OperationDeclaration operation;
+	RequestResponseOperationDeclaration requestResponseOperation;
+
+	for (InputPortInfo inputPort : inputPorts) {
+
+	    if (targetPort == null || inputPort.id().equals(targetPort)) {
+
+		Collection<OperationDeclaration> operations = inputPort.operations();
+
+		Iterator<OperationDeclaration> operatorIterator = operations.iterator();
+		while (operatorIterator.hasNext()) {
+		    operation = operatorIterator.next();
+		    if (operation instanceof RequestResponseOperationDeclaration) {
+			requestResponseOperation = (RequestResponseOperationDeclaration) operation;
+			if (!typeMap.containsKey(requestResponseOperation.requestType().id())) {
+			    typeMap.put(requestResponseOperation.requestType().id(), requestResponseOperation.requestType());
+			}
+			if (!typeMap.containsKey(requestResponseOperation.responseType().id())) {
+			    typeMap.put(requestResponseOperation.responseType().id(), requestResponseOperation.responseType());
+			}
+			for (Entry<String, TypeDefinition> fault : requestResponseOperation.faults().entrySet()) {
+			    if (!typeMap.containsKey(fault.getValue().id())) {
+				typeMap.put(fault.getValue().id(), fault.getValue());
+			    }
+
+			}
+
+		    } else {
+			OneWayOperationDeclaration oneWayOperationDeclaration = (OneWayOperationDeclaration) operation;
+			if (!typeMap.containsKey(oneWayOperationDeclaration.requestType().id())) {
+			    typeMap.put(oneWayOperationDeclaration.requestType().id(), oneWayOperationDeclaration.requestType());
+			}
+		    }
+		}
+
+	    }
+	}
+
+	Iterator<Entry<String, TypeDefinition>> typeMapIterator = typeMap.entrySet().iterator();
+	while (typeMapIterator.hasNext()) {
+	    Entry<String, TypeDefinition> typeEntry = typeMapIterator.next();
+	    if (!(typeEntry.getKey().equals("undefined"))) {
+		parseSubType(typeEntry.getValue());
+	    }
+	}
+	Iterator<Entry<String, TypeDefinition>> subTypeMapIterator = subTypeMap.entrySet().iterator();
+	while (subTypeMapIterator.hasNext()) {
+	    Entry<String, TypeDefinition> subTypeEntry = subTypeMapIterator.next();
+	    typeMap.put(subTypeEntry.getKey(), subTypeEntry.getValue());
+
+	}
+	typeMapIterator = typeMap.entrySet().iterator();
+	createPackageDirectory();
+	createBuildFile();
+	while (typeMapIterator.hasNext()) {
+	    Entry<String, TypeDefinition> typeEntry = typeMapIterator.next();
+	    if (!(typeEntry.getKey().equals("undefined"))) {
+		subclass = new Vector<TypeDefinition>();
+		subtypePresent = false;
+		counterSubClass = 0;
+		String nameFile = this.directoryPath + "\\" + typeEntry.getKey() + ".cs";
+		Writer writer;
+		try {
+		    writer = new BufferedWriter(new FileWriter(nameFile));
+
+		    ConvertTypes(typeEntry.getValue(), writer);
+
+		    writer.flush();
+		    writer.close();
+
+		} catch (IOException ex) {
+		    Logger.getLogger(C_SharpDocumentCreator.class.getName()).log(Level.SEVERE, null, ex);
+		}
+	    }
+
+	}
+
+    }
+
+    public void ConvertInterface(InterfaceDefinition interfaceDefinition, Writer writer)
+	    throws IOException {
+	throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    public void ConvertOutputPorts(OutputPortInfo outputPortInfo, Writer writer)
+	    throws IOException {
+	throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    public void ConvertInputPorts(InputPortInfo inputPortInfo, Writer writer)
+	    throws IOException {
+	throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    public void ConvertOperations(OperationDeclaration operationDeclaration, Writer writer)
+	    throws IOException {
+	throw new UnsupportedOperationException("Not supported yet.");
+    }
+
+    public void ConvertTypes(TypeDefinition typeDefinition, Writer writer)
+	    throws IOException {
+
+	StringBuilder builderHeaderclass = new StringBuilder();
+	builderHeaderclass.append("namespace " + namespace + "{\n");
+	importsCreate(builderHeaderclass, typeDefinition);
+	builderHeaderclass.append("public class " + typeDefinition.id() + " {" + "\n");
+	if (typeDefinition.hasSubTypes()) {
+
+	    ConvertSubTypes(typeDefinition, builderHeaderclass);
+
+	} else {
+	    builderHeaderclass.append("}\n");
+	}
+	writer.append(builderHeaderclass.toString());
+	writer.append("}"); //end of namespace 
+    }
+
+    private void ConvertSubTypes(TypeDefinition typeDefinition, StringBuilder builderHeaderclass) {
+
+	Set<Map.Entry<String, TypeDefinition>> supportSet = typeDefinition.subTypes();
+	Iterator i = supportSet.iterator();
+	while (i.hasNext()) {
+	    Map.Entry me = (Map.Entry) i.next();
+            //System.out.print(((TypeDefinition) me.getValue()).id() + "\n");
+            /*if (((TypeDefinition) me.getValue()) instanceof TypeDefinitionLink){
+	     typeMap.put(((TypeDefinitionLink) me.getValue()).linkedTypeName(),((TypeDefinitionLink)me.getValue()).linkedType());
+
+
+
+	     }else*/ if ((((TypeDefinition) me.getValue()) instanceof TypeInlineDefinition) && (((TypeDefinition) me.getValue()).hasSubTypes())) {
+		builderHeaderclass.append("class " + ((TypeDefinition) me.getValue()).id() + " {" + "\n");
+		ConvertSubTypes((TypeDefinition) me.getValue(), builderHeaderclass);
+	    }
+
+	}
+
+	variableCreate(builderHeaderclass, typeDefinition);
+	constructorCreate(builderHeaderclass, typeDefinition);
+	methodsCreate(builderHeaderclass, typeDefinition);
+	builderHeaderclass.append("}\n");
+    }
+
+    private void closeClass(Writer writer) {
+	StringBuilder builderHeaderclass = new StringBuilder();
+	builderHeaderclass.append(" }\n");
+	try {
+	    writer.append(builderHeaderclass.toString());
+	} catch (IOException ex) {
+	    Logger.getLogger(C_SharpDocumentCreator.class.getName()).log(Level.SEVERE, null, ex);
+	}
+    }
+
+    private void importsCreate(StringBuilder stringBuilder, TypeDefinition type) {
+
+	String nameFile = type.context().sourceName();
+	TypeDefinition supportType = type;
+	//System.out.print( "element of the list Oltree " + supportType.id() + "\n" );
+	List<String> a = new LinkedList<String>();
+	boolean addListImport = false;
+
+	if (supportType.hasSubTypes()) {
+	    subtypePresent = true;
+	    
+	    stringBuilder.append("using System;\n");
+	    stringBuilder.append("using System.Collections.Generic;\n");
+	    stringBuilder.append("using Jolie.net;\n");
+	    stringBuilder.append("using Jolie.service;\n");
+	    stringBuilder.append("using Jolie.runtime;\n");
+	    stringBuilder.append("\n");
+	}
+    }
+
+    private void variableCreate(StringBuilder stringBuilder, TypeDefinition type) {
+
+	if (type.hasSubTypes()) {
+	    Set<Map.Entry<String, TypeDefinition>> supportSet = type.subTypes();
+	    Iterator i = supportSet.iterator();
+
+	    while (i.hasNext()) {
+
+		TypeDefinition subType = (TypeDefinition) (((Map.Entry) i.next()).getValue());
+
+		if (subType instanceof TypeDefinitionLink) {
+
+		    //link
+		    if (((TypeDefinitionLink) subType).cardinality().max() > 1) {
+			stringBuilder.append("private List<" + ((TypeDefinitionLink) subType).linkedType().id() + "> " + "_" + ((TypeDefinitionLink) subType).id() + ";\n");
+		    } else {
+			stringBuilder.append("private " + ((TypeDefinitionLink) subType).linkedType().id() + " " + "_" + ((TypeDefinitionLink) subType).id() + ";\n");
+		    }
+
+		} else if (subType instanceof TypeInlineDefinition) {
+
+		    if (subType.hasSubTypes()) {
+
+			/*if(subType.nativeType()==NativeType.VOID){
+			 //manage type with subtypes and a rootValue
+			 }else{
+			 //manage type with subtypes without rootValue
+			 }*/
+			if (subType.cardinality().max() > 1) {
+			    stringBuilder.append("private List<" + subType.id() + "> " + "_" + subType.id() + ";\n");
+			} else {
+			    stringBuilder.append("private " + subType.id() + " _" + subType.id() + ";\n");
+			}
+
+		    } else {
+			//native type
+			String javaCode = cSharpNativeEquivalent.get(subType.nativeType());
+			if (subType.cardinality().max() > 1) {
+			    stringBuilder.append("private List<" + javaCode + "> " + "_" + subType.id() + ";\n");
+			} else {
+			    stringBuilder.append("private " + javaCode + " _" + subType.id() + ";\n");
+			}
+		    }
+
+		} else {
+		    System.out.println("WARNING: variable is not a Link or an Inline Definition!");
+		}
+	    }
+	}
+
+	if (type.hasSubTypes() && type.nativeType() != NativeType.VOID) {
+	    stringBuilder.append("private " + cSharpNativeEquivalent.get(type.nativeType()) + " rootValue;\n");
+	}
+
+	stringBuilder.append("\n");
+
+    }
+
+    private void constructorCreate(StringBuilder stringBuilder, TypeDefinition type/*, boolean naturalType*/) {
+
+        //constructor with parameters
+	stringBuilder.append("public " + type.id() + "(Value v){\n");
+	stringBuilder.append("\n");
+	//stringBuilder.append("this.v=v;\n");
+
+	if (type.hasSubTypes()) {
+	    Set<Map.Entry<String, TypeDefinition>> supportSet = type.subTypes();
+	    Iterator i = supportSet.iterator();
+
+	    while (i.hasNext()) {
+
+		TypeDefinition subType = (TypeDefinition) (((Map.Entry) i.next()).getValue());
+
+		if (subType instanceof TypeDefinitionLink) {
+		    //link
+		    if (((TypeDefinitionLink) subType).cardinality().max() > 1) {
+			stringBuilder.append("_" + subType.id() + "= new LinkedList<" + ((TypeDefinitionLink) subType).linkedType().id() + ">();" + "\n");
+                        //stringBuilder.append("}\n");
+
+			//to check:
+			stringBuilder.append("if (v.hasChildren(\"").append(subType.id()).append("\")){\n");
+			stringBuilder.append("for(int counter" + subType.id() + "=0;" + "counter" + subType.id() + "<v.getChildren(\"" + subType.id() + "\").size();counter" + subType.id() + "++){\n");
+			stringBuilder.append("" + ((TypeDefinitionLink) subType).linkedTypeName() + " support").append(subType.id()).append(" = new " + ((TypeDefinitionLink) subType).linkedTypeName() + "(v.getChildren(\"").append(subType.id()).append("\").get(counter").append(subType.id()).append("));\n");
+			stringBuilder.append("" + "_" + subType.id() + ".add(support" + subType.id() + ");\n");
+			stringBuilder.append("}\n");
+			//stringBuilder.append( nameVariable +"= new LinkedList<" +((TypeDefinitionLink) me.getValue()).linkedType().id() + ">();"+ "\n" );
+			stringBuilder.append("}\n");
+		    } else {
+			stringBuilder.append("if (v.hasChildren(\"").append(subType.id()).append("\")){\n");
+			stringBuilder.append("_" + subType.id() + " = new " + ((TypeDefinitionLink) subType).linkedTypeName() + "( v.getFirstChild(\"" + subType.id() + "\"));" + "\n");
+			stringBuilder.append("}\n");
+		    }
+		} else if (subType instanceof TypeInlineDefinition) {
+
+		    if (subType.hasSubTypes()) {
+
+			/*if(subType.nativeType()==NativeType.VOID){
+			 //manage type with subtypes and a rootValue
+			 }else{
+			 //manage type with subtypes without rootValue
+			 }*/
+			if (((TypeInlineDefinition) subType).cardinality().max() > 1) {
+			    stringBuilder.append("_" + subType.id() + "= new LinkedList<" + subType.id() + ">();" + "\n");
+
+			    //to check:
+			    stringBuilder.append("if (v.hasChildren(\"").append(subType.id()).append("\")){\n");
+			    stringBuilder.append("for(int counter" + subType.id() + "=0;" + "counter" + subType.id() + "<v.getChildren(\"" + subType.id() + "\").size();counter" + subType.id() + "++){\n");
+			    stringBuilder.append("" + subType.id() + " support").append(subType.id()).append("=new " + subType.id() + "(v.getChildren(\"").append(subType.id()).append("\").get(counter").append(subType.id()).append("));\n");
+			    stringBuilder.append("" + "_" + subType.id() + ".add(support" + subType.id() + ");\n");
+			    stringBuilder.append("}\n");
+			    //stringBuilder.append( nameVariable +"= new LinkedList<" +((TypeDefinitionLink) me.getValue()).linkedType().id() + ">();"+ "\n" );
+			    stringBuilder.append("}\n");
+			} else {
+			    stringBuilder.append("if (v.hasChildren(\"").append(subType.id()).append("\")){\n");
+			    stringBuilder.append("_" + subType.id() + " = new " + subType.id() + "( v.getFirstChild(\"" + subType.id() + "\"));" + "\n");
+			    stringBuilder.append("}\n");
+			}
+
+		    } else {
+			//native type
+			String javaCode = cSharpNativeEquivalent.get(subType.nativeType());
+			String javaMethod = cSharpNativeMethod.get(subType.nativeType());
+
+			if (((TypeDefinition) subType).cardinality().max() > 1) {
+			    stringBuilder.append("_" + subType.id() + "= new LinkedList<" + javaCode + ">();" + "\n");
+
+			    stringBuilder.append("if (v.hasChildren(\"").append(subType.id()).append("\")){\n");
+			    stringBuilder.append("for(int counter" + subType.id() + "=0; " + "counter" + subType.id() + "<v.getChildren(\"" + subType.id() + "\").size(); counter" + subType.id() + "++){\n");
+			    if (subType.nativeType() != NativeType.ANY) {
+				stringBuilder.append("" + javaCode + " support").append(subType.id()).append(" = v.getChildren(\"").append(subType.id()).append("\").get(counter").append(subType.id()).append(")." + javaMethod + ";\n");
+				stringBuilder.append("" + "_" + subType.id() + ".add(support" + subType.id() + ");\n");
+			    } else {
+				stringBuilder.append("if(v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").isDouble()){\n"
+					+ "" + javaCode + " support").append(subType.id()).append(" = v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").doubleValue();\n"
+						+ "" + "_" + subType.id() + ".add(support" + subType.id() + ");\n"
+						+ "}else if(v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").isString()){\n"
+						+ "" + javaCode + " support").append(subType.id()).append(" = v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").strValue();\n"
+						+ "" + "_" + subType.id() + ".add(support" + subType.id() + ");\n"
+						+ "}else if(v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").isInt()){\n"
+						+ "" + javaCode + " support").append(subType.id()).append(" = v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").intValue();\n"
+						+ "" + "_" + subType.id() + ".add(support" + subType.id() + ");\n"
+						+ "}else if(v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").isBool()){\n"
+						+ "" + javaCode + " support").append(subType.id()).append(" = v.getChildren(\"" + subType.id() + "\").get(counter" + subType.id() + ").boolValue();\n"
+						+ "" + "_" + subType.id() + ".add(support" + subType.id() + ");\n"
+						+ "}\n");
+			    }
+			    stringBuilder.append("}\n");
+			    //stringBuilder.append( nameVariable +"= new LinkedList<" +((TypeDefinitionLink) me.getValue()).linkedType().id() + ">();"+ "\n" );
+			    stringBuilder.append("}\n");
+			} else {
+			    stringBuilder.append("if (v.hasChildren(\"").append(subType.id()).append("\")){\n");
+
+			    if (subType.nativeType() != NativeType.ANY) {
+				stringBuilder.append("_" + subType.id() + "= v.getFirstChild(\"" + subType.id() + "\")." + javaMethod + ";" + "\n");
+			    } else {
+				stringBuilder.append("if(v.getFirstChild(\"" + subType.id() + "\").isDouble()){\n"
+					+ "_" + subType.id() + " = v.getFirstChild(\"" + subType.id() + "\").doubleValue();\n"
+					+ "}else if(v.getFirstChild(\"" + subType.id() + "\").isString()){\n"
+					+ "_" + subType.id() + " = v.getFirstChild(\"" + subType.id() + "\").strValue();\n"
+					+ "}else if(v.getFirstChild(\"" + subType.id() + "\").isInt()){\n"
+					+ "_" + subType.id() + " = v.getFirstChild(\"" + subType.id() + "\").intValue();\n"
+					+ "}else if(v.getFirstChild(\"" + subType.id() + "\").isBool()){\n"
+					+ "_" + subType.id() + " = v.getFirstChild(\"" + subType.id() + "\").boolValue();\n"
+					+ "}\n");
+			    }
+			    stringBuilder.append("}\n");
+			}
+
+		    }
+
+		} else {
+		    System.out.println("WARNING: variable is not a Link or an Inline Definition!");
+		}
+	    }
+	}
+
+	if (type.hasSubTypes() && type.nativeType() != NativeType.VOID) {
+
+	    String javaCode = cSharpNativeEquivalent.get(type.nativeType());
+	    String javaMethod = cSharpNativeMethod.get(type.nativeType());
+
+	    if (type.nativeType() != NativeType.ANY) {
+		stringBuilder.append("rootValue = v." + javaMethod + ";" + "\n");
+	    } else {
+		stringBuilder.append("if(v.isDouble()){\n"
+			+ "rootValue = v.doubleValue();\n"
+			+ "}else if(v.isString()){\n"
+			+ "rootValue = v.strValue();\n"
+			+ "}else if(v.isInt()){\n"
+			+ "rootValue = v.intValue();\n"
+			+ "}else if(v.isBool()){\n"
+			+ "rootValue = v.boolValue();\n"
+			+ "}\n");
+	    }
+	}
+	stringBuilder.append("}\n");
+
+        //constructor without parameters
+	stringBuilder.append("public " + type.id() + "(){\n");
+	stringBuilder.append("\n");
+
+	if (type.hasSubTypes()) {
+	    Set<Map.Entry<String, TypeDefinition>> supportSet = type.subTypes();
+	    Iterator i = supportSet.iterator();
+
+	    while (i.hasNext()) {
+
+		TypeDefinition subType = (TypeDefinition) (((Map.Entry) i.next()).getValue());
+
+		if (subType instanceof TypeDefinitionLink) {
+		    //link
+		    if (((TypeDefinitionLink) subType).cardinality().max() > 1) {
+			stringBuilder.append("_" + subType.id() + "= new LinkedList<" + ((TypeDefinitionLink) subType).linkedType().id() + ">();" + "\n");
+			//stringBuilder.append("}\n");
+		    }
+		} else if (subType instanceof TypeInlineDefinition) {
+
+		    if (subType.hasSubTypes()) {
+
+			if (((TypeInlineDefinition) subType).cardinality().max() > 1) {
+			    stringBuilder.append("_" + subType.id() + "= new LinkedList<" + subType.id() + ">();" + "\n");
+			}
+			/*if(subType.nativeType()==NativeType.VOID){
+			 //manage type with subtypes and a rootValue
+			 }else{
+			 //manage type with subtypes without rootValue
+			 }*/
+
+		    } else {
+			//native type
+			String javaCode = cSharpNativeEquivalent.get(subType.nativeType());
+			//String c_SharpMethod = cSharpNativeMethod.get(subType.nativeType());
+
+			if (((TypeDefinition) subType).cardinality().max() > 1) {
+			    stringBuilder.append("_" + subType.id() + "= new LinkedList<" + javaCode + ">();" + "\n");
+			}
+		    }
+
+		} else {
+		    System.out.println("WARNING: variable is not a Link or an Inline Definition!");
+		}
+	    }
+	}
+
+	stringBuilder.append("}\n");
+    }
+
+    private void createBuildFile() {
+	try {
+	    DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
+	    DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
+	    Document doc = docBuilder.newDocument();
+	    Element rootElement = doc.createElement("project");
+	    doc.appendChild(rootElement);
+	    rootElement.setAttribute("name", "JolieConnector");
+	    rootElement.setAttribute("default", "compile");
+	    rootElement.setAttribute("basedir", ".");
+	    /*Section that defines constants*/
+	    Element propertyElement = doc.createElement("property");
+	    propertyElement.setAttribute("name", "src");
+	    propertyElement.setAttribute("location", "src");
+	    rootElement.appendChild(propertyElement);
+	    propertyElement = doc.createElement("property");
+	    propertyElement.setAttribute("name", "dist");
+	    propertyElement.setAttribute("location", "dist");
+	    rootElement.appendChild(propertyElement);
+	    propertyElement = doc.createElement("property");
+	    propertyElement.setAttribute("name", "build");
+	    propertyElement.setAttribute("location", "built");
+	    rootElement.appendChild(propertyElement);
+	    propertyElement = doc.createElement("property");
+	    propertyElement.setAttribute("name", "lib");
+	    propertyElement.setAttribute("location", "lib");
+	    rootElement.appendChild(propertyElement);
+	    propertyElement = doc.createElement("property");
+	    propertyElement.setAttribute("environment", "env");
+	    rootElement.appendChild(propertyElement);
+
+	    /*
+	     This portion of the code is responsible for the dist target creation
+	     */
+	    Element initElement = doc.createElement("target");
+	    initElement.setAttribute("name", "init");
+	    rootElement.appendChild(initElement);
+	    Element mkDirElement = doc.createElement("mkdir");
+	    mkDirElement.setAttribute("dir", "${build}");
+	    initElement.appendChild(mkDirElement);
+	    mkDirElement = doc.createElement("mkdir");
+	    mkDirElement.setAttribute("dir", "${dist}");
+	    initElement.appendChild(mkDirElement);
+	    mkDirElement = doc.createElement("mkdir");
+	    mkDirElement.setAttribute("dir", "${lib}");
+	    initElement.appendChild(mkDirElement);
+	    mkDirElement = doc.createElement("mkdir");
+	    mkDirElement.setAttribute("dir", "${dist}/lib");
+	    initElement.appendChild(mkDirElement);
+	    Element copyLib = doc.createElement("copy");
+	    copyLib.setAttribute("file", "${env.JOLIE_HOME}/jolie.jar");
+	    copyLib.setAttribute("tofile", "${lib}/jolie.jar");
+	    initElement.appendChild(copyLib);
+	    copyLib = doc.createElement("copy");
+	    copyLib.setAttribute("file", "${env.JOLIE_HOME}/lib/libjolie.jar");
+	    copyLib.setAttribute("tofile", "${lib}/libjolie.jar");
+	    initElement.appendChild(copyLib);
+	    copyLib = doc.createElement("copy");
+	    copyLib.setAttribute("file", "${env.JOLIE_HOME}/lib/jolie-java.jar");
+	    copyLib.setAttribute("tofile", "${lib}/jolie-java.jar");
+	    initElement.appendChild(copyLib);
+	    copyLib = doc.createElement("copy");
+	    copyLib.setAttribute("file", "${env.JOLIE_HOME}/extensions/sodep.jar");
+	    copyLib.setAttribute("tofile", "${lib}/sodep.jar");
+	    initElement.appendChild(copyLib);
+	    Element compileElement = doc.createElement("target");
+	    rootElement.appendChild(compileElement);
+	    compileElement.setAttribute("name", "compile");
+	    compileElement.setAttribute("depends", "init");
+	    Element javacElement = doc.createElement("javac");
+	    compileElement.appendChild(javacElement);
+	    javacElement.setAttribute("srcdir", "${src}");
+	    javacElement.setAttribute("destdir", "${build}");
+	    Element classPathElement = doc.createElement("classpath");
+	    javacElement.appendChild(classPathElement);
+	    Element jolieJar = doc.createElement("pathelement");
+	    classPathElement.appendChild(jolieJar);
+	    jolieJar.setAttribute("path", "./lib/jolie.jar");
+	    Element libJolieJar = doc.createElement("pathelement");
+	    classPathElement.appendChild(libJolieJar);
+	    libJolieJar.setAttribute("path", "./lib/libjolie.jar");
+	    Element distElement = doc.createElement("target");
+	    rootElement.appendChild(distElement);
+	    distElement.setAttribute("name", "dist");
+	    distElement.setAttribute("depends", "compile");
+	    Element jarElement = doc.createElement("jar");
+	    distElement.appendChild(jarElement);
+	    jarElement.setAttribute("jarfile", "${dist}/JolieConnector.jar");
+	    jarElement.setAttribute("basedir", "${build}");
+	    if (addSource) {
+		Element filesetElement = doc.createElement("fileset");
+		filesetElement.setAttribute("dir", "${src}");
+		filesetElement.setAttribute("includes", "**/*.java");
+		jarElement.appendChild(filesetElement);
+	    }
+	    copyLib = doc.createElement("copy");
+	    copyLib.setAttribute("toDir", "${dist}/lib");
+	    Element filesetElement = doc.createElement("fileset");
+	    filesetElement.setAttribute("dir", "${lib}");
+	    copyLib.appendChild(filesetElement);
+	    distElement.appendChild(copyLib);
+	    TransformerFactory transformerFactory = TransformerFactory.newInstance();
+	    Transformer transformer = transformerFactory.newTransformer();
+	    DOMSource source = new DOMSource(doc);
+	    StreamResult streamResult = new StreamResult(new File(".\\build.xml"));
+	    transformer.transform(source, streamResult);
+	} catch (ParserConfigurationException ex) {
+	    Logger.getLogger(C_SharpDocumentCreator.class.getName()).log(Level.SEVERE, null, ex);
+	} catch (TransformerConfigurationException ex) {
+	    Logger.getLogger(C_SharpDocumentCreator.class.getName()).log(Level.SEVERE, null, ex);
+	} catch (TransformerException ex) {
+	    Logger.getLogger(C_SharpDocumentCreator.class.getName()).log(Level.SEVERE, null, ex);
+	}
+
+    }
+
+    private void methodsCreate(StringBuilder stringBuilder, TypeDefinition type/*, boolean naturalType*/) {
+
+	if (type.hasSubTypes()) {
+	    Set<Map.Entry<String, TypeDefinition>> supportSet = type.subTypes();
+	    Iterator i = supportSet.iterator();
+
+	    while (i.hasNext()) {
+
+		TypeDefinition subType = (TypeDefinition) (((Map.Entry) i.next()).getValue());
+
+		String nameVariable = subType.id();
+		String startingChar = nameVariable.substring(0, 1);
+		String remaningStr = nameVariable.substring(1, nameVariable.length());
+		String nameVariableOp = startingChar.toUpperCase() + remaningStr;
+		if (nameVariableOp.equals("Value")) {
+		    nameVariableOp = "__Value";
+		}
+
+		if (subType instanceof TypeDefinitionLink) {
+		    //link
+
+		    if (subType.cardinality().max() > 1) {
+
+			stringBuilder.append( ((TypeDefinitionLink) subType).linkedTypeName() + " get" + nameVariableOp + "Value(int index){\n");
+			stringBuilder.append("\nreturn " + "_" + nameVariable + ".get(index);\n");
+			stringBuilder.append("}\n");
+
+			stringBuilder.append( "int" + " get" + nameVariableOp + "Size(){\n");
+			stringBuilder.append("\nreturn " + "_" + nameVariable + ".size();\n");
+			stringBuilder.append("}\n");
+
+			stringBuilder.append("void add" + nameVariableOp + "Value(" + ((TypeDefinitionLink) subType).linkedTypeName() + " value ){\n");
+			stringBuilder.append("\n" + "_" + nameVariable + ".add(value);\n");
+			stringBuilder.append("}\n");
+
+			stringBuilder.append("void remove" + nameVariableOp + "Value( int index ){\n");
+			stringBuilder.append("" + "_" + nameVariable + ".remove(index);\n");
+			stringBuilder.append("}\n");
+
+		    } else {
+
+			stringBuilder.append(((TypeDefinitionLink) subType).linkedTypeName() + " get" + nameVariableOp + "(){\n");
+			stringBuilder.append("\nreturn " + "_" + nameVariable + ";\n");
+			stringBuilder.append("}\n");
+
+			stringBuilder.append("void set" + nameVariableOp + "(" + ((TypeDefinitionLink) subType).linkedTypeName() + " value ){\n");
+			stringBuilder.append("\n" + "_" + nameVariable + " = value;\n");
+			stringBuilder.append("}\n");
+
+		    }
+		} else if (subType instanceof TypeInlineDefinition) {
+
+		    if (subType.hasSubTypes()) {
+
+			/*if(subType.nativeType()==NativeType.VOID){
+			 //manage type with subtypes and a rootValue
+			 }else{
+			 //manage type with subtypes without rootValue
+			 }*/
+			if (subType.cardinality().max() > 1) {
+
+			    stringBuilder.append(subType.id() + " get" + nameVariableOp + "Value(int index){\n");
+			    stringBuilder.append("\nreturn " + "_" + nameVariable + ".get(index);\n");
+			    stringBuilder.append("}\n");
+
+			    stringBuilder.append("int" + " get" + nameVariableOp + "Size(){\n");
+			    stringBuilder.append("\nreturn " + "_" + nameVariable + ".size();\n");
+			    stringBuilder.append("}\n");
+
+			    stringBuilder.append("void add" + nameVariableOp + "Value(" + subType.id() + " value ){\n");
+			    stringBuilder.append("\n" + "_" + nameVariable + ".add(value);\n");
+			    stringBuilder.append("}\n");
+
+			    stringBuilder.append("void remove" + nameVariableOp + "Value( int index ){\n");
+			    stringBuilder.append("" + "_" + nameVariable + ".remove(index);\n");
+			    stringBuilder.append("}\n");
+
+			} else {
+
+			    stringBuilder.append( subType.id() + " get" + nameVariableOp + "(){\n");
+			    stringBuilder.append("\nreturn " + "_" + nameVariable + ";\n");
+			    stringBuilder.append("}\n");
+
+			    stringBuilder.append("void set" + nameVariableOp + "(" + subType.id() + " value ){\n");
+			    stringBuilder.append("\n" + "_" + nameVariable + " = value;\n");
+			    stringBuilder.append("}\n");
+
+			}
+
+		    } else {
+			//native type
+
+			String c_Sharp_Code = cSharpNativeEquivalent.get(subType.nativeType());
+			String javaMethod = cSharpNativeMethod.get(subType.nativeType());
+
+			if (subType.nativeType() != NativeType.VOID) {
+
+			    if (subType.cardinality().max() > 1) {
+
+				stringBuilder.append("int get" + nameVariableOp + "Size(){\n");
+				stringBuilder.append("\nreturn " + "_" + nameVariable + ".size();\n");
+				stringBuilder.append("}\n");
+
+				stringBuilder.append( c_Sharp_Code + " get" + nameVariableOp + "Value(int index){\n");
+				stringBuilder.append("return " + "_" + nameVariable + ".get(index);\n");
+				stringBuilder.append("}\n");
+
+				stringBuilder.append("public " + "void add" + nameVariableOp + "Value(" + c_Sharp_Code + " value ){\n");
+				stringBuilder.append("" + c_Sharp_Code + " support").append(nameVariable).append(" = value;\n");
+				stringBuilder.append("" + "_" + nameVariable + ".add(" + "support" + nameVariable + " );\n");
+				stringBuilder.append("}\n");
+
+				stringBuilder.append("public " + "void remove" + nameVariableOp + "Value( int index ){\n");
+				stringBuilder.append("" + "_" + nameVariable + ".remove(index);\n");
+				stringBuilder.append("}\n");
+
+			    } else {
+				stringBuilder.append("public " + c_Sharp_Code + " get" + nameVariableOp + "(){\n");
+				stringBuilder.append("\nreturn " + "_" + nameVariable + ";\n");
+				stringBuilder.append("}\n");
+
+				stringBuilder.append("public " + "void set" + nameVariableOp + "(" + c_Sharp_Code + " value ){\n");
+				stringBuilder.append("\n" + "_" + nameVariable + " = value;\n");
+				stringBuilder.append("}\n");
+			    }
+
+			}
+		    }
+
+		} else {
+		    System.out.println("WARNING: variable is not a Link or an Inline Definition!");
+		}
+	    }
+	    if (type.hasSubTypes() && type.nativeType() != NativeType.VOID) {
+
+		String c_Sharp_Code = cSharpNativeEquivalent.get(type.nativeType());
+		String c_SharpMethod = cSharpNativeMethod.get(type.nativeType());
+
+		stringBuilder.append("public " + c_Sharp_Code + " getRootValue(){\n");
+		stringBuilder.append("\nreturn " + "rootValue;\n");
+		stringBuilder.append("}\n");
+
+		stringBuilder.append("public void setRootValue(" + c_Sharp_Code + " value){\n");
+		stringBuilder.append("\nrootValue = value;\n");
+		stringBuilder.append("}\n");
+
+	    }
+
+	}
+
+        //getValue
+	stringBuilder.append("public " + "Value getValue(){\n");
+	stringBuilder.append("Value vReturn = Value.create();\n");
+
+	if (type.hasSubTypes()) {
+	    Set<Map.Entry<String, TypeDefinition>> supportSet = type.subTypes();
+	    Iterator i = supportSet.iterator();
+
+	    while (i.hasNext()) {
+
+		TypeDefinition subType = (TypeDefinition) (((Map.Entry) i.next()).getValue());
+
+		if (subType instanceof TypeDefinitionLink) {
+		    //link
+		    if (subType.cardinality().max() > 1) {
+
+			stringBuilder.append("if(_").append(subType.id()).append("!=null){\n");
+			stringBuilder.append("for(int counter" + subType.id() + "=0;" + "counter" + subType.id() + "<" + "_" + subType.id() + ".size();counter" + subType.id() + "++){\n");
+			stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\").deepCopy(" + "_" + subType.id() + ".get(counter" + subType.id() + ").getValue());\n");
+			stringBuilder.append("}\n");
+			stringBuilder.append("}\n");
+
+		    } else {
+			stringBuilder.append("if((_").append(subType.id()).append("!=null)){\n");
+			stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".deepCopy(" + "_" + subType.id() + ".getValue());\n");
+			stringBuilder.append("}\n");
+		    }
+		} else if (subType instanceof TypeInlineDefinition) {
+
+		    if (subType.hasSubTypes()) {
+
+			/*if(subType.nativeType()==NativeType.VOID){
+			 //manage type with subtypes and a rootValue
+			 }else{
+			 //manage type with subtypes without rootValue
+			 }*/
+			if (subType.cardinality().max() > 1) {
+
+			    stringBuilder.append("if(_").append(subType.id()).append("!=null){\n");
+			    stringBuilder.append("for(int counter" + subType.id() + "=0;" + "counter" + subType.id() + "<" + "_" + subType.id() + ".size();counter" + subType.id() + "++){\n");
+			    stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\").deepCopy(" + "_" + subType.id() + ".get(counter" + subType.id() + ").getValue());\n");
+			    stringBuilder.append("}\n");
+			    stringBuilder.append("}\n");
+
+			} else {
+			    stringBuilder.append("if((_").append(subType.id()).append("!=null)){\n");
+			    stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".deepCopy(" + "_" + subType.id() + ".getValue());\n");
+			    stringBuilder.append("}\n");
+			}
+
+		    } else {
+			//native type
+
+			String javaCode = cSharpNativeEquivalent.get(type.nativeType());
+			String javaMethod = cSharpNativeMethod.get(type.nativeType());
+
+			if (subType.cardinality().max() > 1) {
+			    stringBuilder.append("if(_").append(subType.id()).append("!=null){\n");
+			    stringBuilder.append("for(int counter" + subType.id() + "=0;" + "counter" + subType.id() + "<" + "_" + subType.id() + ".size();counter" + subType.id() + "++){\n");
+			    if (subType.nativeType() != NativeType.ANY) {
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\").setValue(" + "_" + subType.id() + ".get(counter" + subType.id() + "));\n");
+			    } else {
+				stringBuilder.append("if(_" + subType.id() + ".get(counter" + subType.id() + ") is Integer){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "((Integer)(_" + subType.id() + ".get(counter" + subType.id() + "))).intValue());\n");
+				stringBuilder.append("}else if(_" + subType.id() + ".get(counter" + subType.id() + ") is Double){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "((Double)(_" + subType.id() + ".get(counter" + subType.id() + "))).doubleValue());\n");
+				stringBuilder.append("}else if(_" + subType.id() + ".get(counter" + subType.id() + ") is String){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "(String)(_" + subType.id() + ".get(counter" + subType.id() + ")));\n");
+				stringBuilder.append("}else if(_" + subType.id() + ".get(counter" + subType.id() + ") is Boolean){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "(Boolean)(_" + subType.id() + ".get(counter" + subType.id() + ")));\n");
+				stringBuilder.append("}");
+			    }
+			    stringBuilder.append("}");
+			    stringBuilder.append("}\n");
+
+			} else {
+			    stringBuilder.append("if((_").append(subType.id()).append("!=null)){\n");
+			    if (subType.nativeType() != NativeType.ANY) {
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "_" + subType.id() + ");\n");
+			    } else {
+				stringBuilder.append("if(_" + subType.id() + " is Integer){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "((Integer)(_" + subType.id() + ")).intValue());\n");
+				stringBuilder.append("}else if(_" + subType.id() + " is Double){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "((Double)(_" + subType.id() + ")).doubleValue());\n");
+				stringBuilder.append("}else if(_" + subType.id() + " is String){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "(String)(_" + subType.id() + "));\n");
+
+				stringBuilder.append("}else if(_" + subType.id() + " is Boolean){\n");
+				stringBuilder.append("vReturn.getNewChild(\"" + subType.id() + "\")" + ".setValue(" + "(Boolean)(_" + subType.id() + "));\n");
+				stringBuilder.append("}");
+			    }
+			    stringBuilder.append("}\n");
+			}
+		    }
+
+		} else {
+		    System.out.println("WARNING: variable is not a Link or an Inline Definition!");
+		}
+	    }
+	}
+
+	if (type.hasSubTypes() && type.nativeType() != NativeType.VOID) {
+
+	    stringBuilder.append("if((rootValue!=null)){\n");
+	    if (type.nativeType() != NativeType.ANY) {
+		stringBuilder.append("vReturn.setValue(rootValue);\n");
+	    } else {
+		stringBuilder.append("if(rootValue is Integer){\n");
+		stringBuilder.append("vReturn.setValue(((Integer)(rootValue)).intValue());\n");
+		stringBuilder.append("}else if(rootValue is Double){\n");
+		stringBuilder.append("vReturn.setValue(((Double)(rootValue)).doubleValue());\n");
+		stringBuilder.append("}else if(rootValue is String){\n");
+		stringBuilder.append("vReturn.setValue(((String)(rootValue)));\n");
+		stringBuilder.append("}else if(rootValue is Boolean){\n");
+		stringBuilder.append("vReturn.setValue(((Boolean)(rootValue)));\n");
+		stringBuilder.append("}");
+	    }
+
+	    stringBuilder.append("}\n");
+
+	}
+
+	stringBuilder.append("return vReturn ;\n");
+	stringBuilder.append("}\n");
+    }
+
+    private void parseSubType(TypeDefinition typeDefinition) {
+	if (typeDefinition.hasSubTypes()) {
+	    Set<Map.Entry<String, TypeDefinition>> supportSet = typeDefinition.subTypes();
+	    Iterator i = supportSet.iterator();
+	    while (i.hasNext()) {
+		Map.Entry me = (Map.Entry) i.next();
+		//System.out.print(((TypeDefinition) me.getValue()).id() + "\n");
+		if (((TypeDefinition) me.getValue()) instanceof TypeDefinitionLink) {
+		    if (!subTypeMap.containsKey(((TypeDefinitionLink) me.getValue()).linkedTypeName())) {
+			subTypeMap.put(((TypeDefinitionLink) me.getValue()).linkedTypeName(), ((TypeDefinitionLink) me.getValue()).linkedType());
+			parseSubType(((TypeDefinitionLink) me.getValue()).linkedType());
+		    }
+		}
+	    }
+	}
+    }
+}
