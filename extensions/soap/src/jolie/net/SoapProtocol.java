@@ -94,6 +94,7 @@ import javax.wsdl.extensions.soap.SOAPOperation;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
+import static javax.xml.soap.SOAPMessage.CHARACTER_SET_ENCODING;
 import javax.xml.transform.OutputKeys;
 import javax.xml.transform.Source;
 import javax.xml.transform.Transformer;
@@ -794,6 +795,7 @@ public class SoapProtocol extends SequentialCommProtocol implements HttpUtils.Ht
             }
 
             ByteArrayOutputStream tmpStream = new ByteArrayOutputStream();
+	    soapMessage.setProperty(CHARACTER_SET_ENCODING, "utf-8");
             soapMessage.writeTo(tmpStream);
             ByteArray content = new ByteArray( tmpStream.toByteArray() );
 
@@ -858,6 +860,7 @@ public class SoapProtocol extends SequentialCommProtocol implements HttpUtils.Ht
             inputId = message.operationName();
 
             ostream.write(httpMessage.toString().getBytes(HttpUtils.URL_DECODER_ENC));
+	    
             ostream.write(content.getBytes());
         } catch (SOAPException se) {
             throw new IOException(se);
