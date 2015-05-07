@@ -40,6 +40,7 @@ import javax.net.ssl.SSLEngineResult;
 import javax.net.ssl.SSLEngineResult.HandshakeStatus;
 import javax.net.ssl.SSLEngineResult.Status;
 import javax.net.ssl.SSLException;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.TrustManagerFactory;
 import jolie.net.CommMessage;
 import jolie.net.protocols.CommProtocol;
@@ -152,6 +153,7 @@ public class SSLProtocol extends SequentialCommProtocol
 			result.enlargeBuffer();
 			result.log = sslEngine.wrap( source, result.buffer );
 		}
+	
 		if ( result.log.getStatus() == Status.CLOSED ) {
 			throw new IOException( "Remote party closed SSL connection" );
 		}
@@ -197,6 +199,8 @@ public class SSLProtocol extends SequentialCommProtocol
 		}
 		try {
 			SSLContext context = SSLContext.getInstance( protocol );
+			System.out.println("KeystoreFormat>>>> "+ keyStoreFormat );
+		        System.out.println("trustStoreFormat>>>> "+ trustStoreFormat  );
 			KeyStore ks = KeyStore.getInstance( keyStoreFormat );
 			KeyStore ts = KeyStore.getInstance( trustStoreFormat );
 
@@ -227,7 +231,8 @@ public class SSLProtocol extends SequentialCommProtocol
 			tmf.init( ts );
 
 			context.init( kmf.getKeyManagers(), tmf.getTrustManagers(), null );
-
+                        System.out.println(context.getProvider().getName());
+			System.out.println(context.getProvider().getInfo());
 			sslEngine = context.createSSLEngine();
 			sslEngine.setEnabledProtocols( new String[] { protocol } );
 			sslEngine.setUseClientMode( isClient );
@@ -259,20 +264,23 @@ public class SSLProtocol extends SequentialCommProtocol
 			sslEngine.beginHandshake();
 			firstTime = false;
 		}
-
+	        SSLParameters paramenters = sslEngine.getSSLParameters();
+		
 		SSLResult result;
 		Runnable runnable;
 		while (
 			sslEngine.getHandshakeStatus() != HandshakeStatus.NOT_HANDSHAKING
 			&& sslEngine.getHandshakeStatus() != HandshakeStatus.FINISHED
 		) {
-			switch ( sslEngine.getHandshakeStatus() ) {
+		  
+		     switch ( sslEngine.getHandshakeStatus() ) {
 			case NEED_TASK:
 				while ( (runnable = sslEngine.getDelegatedTask()) != null ) {
 					runnable.run();
 				}
 				break;
 			case NEED_WRAP:
+			        
 				result = wrap( EMPTY_BYTE_BUFFER );
 				if ( result.log.bytesProduced() > 0 ) { //need to send result to other side
 					outputStream.write( result.buffer.array(), 0, result.buffer.limit() );

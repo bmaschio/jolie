@@ -901,8 +901,9 @@ public class SoapProtocol extends SequentialCommProtocol implements HttpUtils.Ht
                     childValue = value.getNewChild(currNode.getLocalName());
                     xmlNodeToValue(childValue, currNode, false);
                     break;
+		 
                 case Node.TEXT_NODE:
-                    if (!isRecRoot) {
+                    if (!(currNode.getNodeValue().trim().isEmpty())) {
                         value.setValue(currNode.getNodeValue());
                     }
                     break;
@@ -969,6 +970,8 @@ public class SoapProtocol extends SequentialCommProtocol implements HttpUtils.Ht
 
                 SOAPMessage soapMessage = messageFactory.createMessage();
                 DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+		factory.isIgnoringElementContentWhitespace(checkBooleanParameter("dropRootValue", false));
+		
                 /*
                  * Schema messageSchema = getRecvMessageValidationSchema(); if (
                  * messageSchema != null ) {
@@ -976,10 +979,11 @@ public class SoapProtocol extends SequentialCommProtocol implements HttpUtils.Ht
                  * factory.setSchema( messageSchema ); }
                  */
                 factory.setNamespaceAware(true);
+		
                 DocumentBuilder builder = factory.newDocumentBuilder();
-                InputSource src = new InputSource(new ByteArrayInputStream(message.content()));
+		InputSource src = new InputSource(new ByteArrayInputStream(message.content()));
                 src.setEncoding(charset);
-                Document doc = builder.parse(src);
+		Document doc = builder.parse(src);
                 DOMSource dom = new DOMSource(doc);
                 soapMessage.getSOAPPart().setContent(dom);
 
