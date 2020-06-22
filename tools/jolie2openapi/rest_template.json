@@ -1,6 +1,6 @@
 {
     "login": {
-        "method": "post",
+        "method":"post",
         "template": "/api/accounts/login",
         "exceptions":{
             "LoginError" :401
@@ -8,9 +8,9 @@
     },
     "getOrders": {
         "method": "get",
-        "teplate": "/api/accounts/orders",
-        "incommingHeaderMapping":{
-            "Authorization": "authorization"
+        "template": "/api/accounts/{userId}/orders/{orderId}",
+        "incomingHeaderMapping":{
+            "Authorization": "token"
         }
         ,
         "exceptions":{
@@ -20,9 +20,9 @@
     },
     "addItem": {
         "method": "put",
-        "template": "/api/accunts/orders/{orderId}",
-        "incommingHeaderMapping":{
-            "Authorization": "authorization"
+        "template": "/api/accounts/orders/{orderId}?porco1={porco}&maiale2={maiale}",
+        "incomingHeaderMapping":{
+            "Authorization": "token"
         },       
         "exceptions":{
             "SessionExpired" :401
